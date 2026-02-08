@@ -1,0 +1,66 @@
+services:
+  # Redis Stack: Queue + Bloom filter for deduplication
+  redis:
+    image: redis/redis-stack:latest
+    container_name: meterflow-redis
+    ports:
+      - "6379:6379"   # Redis
+      - "8001:8001"   # RedisInsight (UI)
+    volumes:
+      - redis_data:/data
+    environment:
+      - REDIS_ARGS=--appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ClickHouse: Event storage + aggregation queries
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: meterflow-clickhouse
+    ports:
+      - "8123:8123"   # HTTP interface
+      - "9000:9000"   # Native protocol
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
+    environment:
+      - CLICKHOUSE_DB=meterflow
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=meterflow
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MinIO: S3-compatible storage for raw event backups
+  minio:
+    image: minio/minio:latest
+    container_name: meterflow-minio
+    ports:
+      - "9002:9000"   # API (changed to avoid conflict with ClickHouse)
+      - "9003:9001"   # Console UI
+    volumes:
+      - minio_data:/data
+    environment:
+      - MINIO_ROOT_USER=meterflow
+      - MINIO_ROOT_PASSWORD=meterflow123
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  redis_data:
+  clickhouse_data:
+  clickhouse_logs:
+  minio_data:
