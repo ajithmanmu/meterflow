@@ -35,7 +35,35 @@ export const EventIngestionResponseSchema = Type.Object({
   ),
 });
 
+/**
+ * Usage Query request schema (query params)
+ */
+export const UsageQuerySchema = Type.Object({
+  customer_id: Type.String({ minLength: 1 }),
+  metric: Type.String({ minLength: 1 }),
+  start: Type.Number({ minimum: 0 }),
+  end: Type.Number({ minimum: 0 }),
+  group_by: Type.Optional(Type.String()),
+});
+
+/**
+ * Usage Query response schema
+ */
+export const UsageQueryResponseSchema = Type.Object({
+  customer_id: Type.String(),
+  metric: Type.String(),
+  period: Type.Object({
+    start: Type.Number(),
+    end: Type.Number(),
+  }),
+  value: Type.Number(),
+  unit: Type.String(),
+  breakdown: Type.Optional(Type.Record(Type.String(), Type.Number())),
+});
+
 // TypeScript types derived from schemas
 export type UsageEvent = Static<typeof UsageEventSchema>;
 export type BatchEventRequest = Static<typeof BatchEventRequestSchema>;
 export type EventIngestionResponse = Static<typeof EventIngestionResponseSchema>;
+export type UsageQuery = Static<typeof UsageQuerySchema>;
+export type UsageQueryResponse = Static<typeof UsageQueryResponseSchema>;

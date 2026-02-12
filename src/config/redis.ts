@@ -7,7 +7,6 @@ export const redis = new Redis({
   host: REDIS_HOST,
   port: REDIS_PORT,
   maxRetriesPerRequest: 3,
-  retryDelayOnFailover: 100,
 });
 
 redis.on('connect', () => {

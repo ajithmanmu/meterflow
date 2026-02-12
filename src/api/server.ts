@@ -3,6 +3,8 @@ import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import {
   BatchEventRequestSchema,
   EventIngestionResponseSchema,
+  UsageQuerySchema,
+  UsageQueryResponseSchema,
   UsageEvent,
   EventIngestionResponse,
 } from './schemas';
@@ -13,6 +15,8 @@ import { initClickHouse } from '../config/clickhouse';
 import { initMinio } from '../config/minio';
 import { insertEvents } from '../utils/storage';
 import { backupEvents } from '../utils/backup';
+import { queryUsage } from '../utils/usage';
+import { METRICS_CATALOG } from '../config/metrics';
 
 const app = Fastify({
   logger: true,
@@ -96,6 +100,44 @@ app.post(
     return reply.status(200).send(response);
   }
 );
+
+/**
+ * GET /v1/usage - Query aggregated usage for a customer
+ *
+ * Uses Billable Metrics catalog to translate metric code into ClickHouse aggregation.
+ * Supports optional group_by for dimensional breakdown.
+ */
+app.get(
+  '/v1/usage',
+  {
+    schema: {
+      querystring: UsageQuerySchema,
+      response: {
+        200: UsageQueryResponseSchema,
+      },
+    },
+  },
+  async (request, reply) => {
+    const { customer_id, metric, start, end, group_by } = request.query;
+
+    const result = await queryUsage({
+      customer_id,
+      metric,
+      start,
+      end,
+      group_by,
+    });
+
+    return reply.status(200).send(result);
+  }
+);
+
+/**
+ * GET /v1/metrics - List available billable metrics
+ */
+app.get('/v1/metrics', async () => {
+  return { metrics: METRICS_CATALOG };
+});
 
 // Health check endpoint
 app.get('/health', async () => {
