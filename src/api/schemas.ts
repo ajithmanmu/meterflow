@@ -61,9 +61,49 @@ export const UsageQueryResponseSchema = Type.Object({
   breakdown: Type.Optional(Type.Record(Type.String(), Type.Number())),
 });
 
+/**
+ * Anomaly Check request schema (query params)
+ */
+export const AnomalyCheckSchema = Type.Object({
+  customer_id: Type.String({ minLength: 1 }),
+  metric: Type.String({ minLength: 1 }),
+  current_start: Type.Number({ minimum: 0 }),
+  current_end: Type.Number({ minimum: 0 }),
+  baseline_days: Type.Optional(Type.Number({ minimum: 1, maximum: 365 })),
+  threshold: Type.Optional(Type.Number({ minimum: 1, maximum: 10 })),
+});
+
+/**
+ * Anomaly Check response schema
+ */
+export const AnomalyCheckResponseSchema = Type.Object({
+  customer_id: Type.String(),
+  metric: Type.String(),
+  period: Type.Object({
+    start: Type.Number(),
+    end: Type.Number(),
+  }),
+  current_value: Type.Number(),
+  baseline: Type.Object({
+    mean: Type.Number(),
+    stddev: Type.Number(),
+    sample_count: Type.Number(),
+  }),
+  z_score: Type.Number(),
+  is_anomaly: Type.Boolean(),
+  severity: Type.Union([
+    Type.Literal('normal'),
+    Type.Literal('warning'),
+    Type.Literal('critical'),
+  ]),
+  unit: Type.String(),
+});
+
 // TypeScript types derived from schemas
 export type UsageEvent = Static<typeof UsageEventSchema>;
 export type BatchEventRequest = Static<typeof BatchEventRequestSchema>;
 export type EventIngestionResponse = Static<typeof EventIngestionResponseSchema>;
 export type UsageQuery = Static<typeof UsageQuerySchema>;
 export type UsageQueryResponse = Static<typeof UsageQueryResponseSchema>;
+export type AnomalyCheck = Static<typeof AnomalyCheckSchema>;
+export type AnomalyCheckResponse = Static<typeof AnomalyCheckResponseSchema>;

@@ -5,6 +5,8 @@ import {
   EventIngestionResponseSchema,
   UsageQuerySchema,
   UsageQueryResponseSchema,
+  AnomalyCheckSchema,
+  AnomalyCheckResponseSchema,
   UsageEvent,
   EventIngestionResponse,
 } from './schemas';
@@ -16,6 +18,7 @@ import { initMinio } from '../config/minio';
 import { insertEvents } from '../utils/storage';
 import { backupEvents } from '../utils/backup';
 import { queryUsage } from '../utils/usage';
+import { checkAnomaly } from '../utils/anomaly';
 import { METRICS_CATALOG } from '../config/metrics';
 
 const app = Fastify({
@@ -138,6 +141,47 @@ app.get(
 app.get('/v1/metrics', async () => {
   return { metrics: METRICS_CATALOG };
 });
+
+/**
+ * GET /v1/anomalies/check - Check if current usage is anomalous
+ *
+ * Compares current period usage against historical baseline using Z-score.
+ * Z-score = (current_value - mean) / stddev
+ *
+ * Severity levels:
+ * - normal: |z| < 2
+ * - warning: 2 <= |z| < 3
+ * - critical: |z| >= 3 (default threshold)
+ *
+ * Production note: In a production environment, this would be a scheduled job
+ * running on AWS Lambda + EventBridge, storing anomalies in a dedicated table
+ * for alerting and dashboard consumption. See docs/PRODUCTION_ANOMALY_DETECTION.md
+ */
+app.get(
+  '/v1/anomalies/check',
+  {
+    schema: {
+      querystring: AnomalyCheckSchema,
+      response: {
+        200: AnomalyCheckResponseSchema,
+      },
+    },
+  },
+  async (request, reply) => {
+    const { customer_id, metric, current_start, current_end, baseline_days, threshold } = request.query;
+
+    const result = await checkAnomaly({
+      customer_id,
+      metric,
+      current_start,
+      current_end,
+      baseline_days,
+      threshold,
+    });
+
+    return reply.status(200).send(result);
+  }
+);
 
 // Health check endpoint
 app.get('/health', async () => {

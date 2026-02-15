@@ -186,6 +186,39 @@ async function verifyDuplicateRejection(): Promise<boolean> {
   return assertEqual(result.duplicates, 1, 'Duplicate rejected');
 }
 
+async function verifyAnomalyAPI(): Promise<boolean> {
+  log('🔍', 'Verifying Anomaly Detection API...');
+
+  const now = Date.now();
+  const start = now - 3600000; // 1 hour ago
+  const end = now + 3600000; // 1 hour from now
+
+  // Test anomaly check endpoint
+  const response = await fetch(
+    `${API_BASE}/v1/anomalies/check?customer_id=${TEST_CUSTOMER}&metric=api_calls&current_start=${start}&current_end=${end}`
+  );
+
+  if (!response.ok) {
+    log('❌', `Anomaly API returned status ${response.status}`);
+    return false;
+  }
+
+  const result = await response.json();
+
+  let allPassed = true;
+
+  // Verify response structure
+  allPassed = (await assertEqual(result.customer_id, TEST_CUSTOMER, 'Anomaly customer_id')) && allPassed;
+  allPassed = (await assertEqual(result.metric, 'api_calls', 'Anomaly metric')) && allPassed;
+  allPassed = (await assertEqual(typeof result.z_score, 'number', 'Anomaly z_score type')) && allPassed;
+  allPassed = (await assertEqual(typeof result.is_anomaly, 'boolean', 'Anomaly is_anomaly type')) && allPassed;
+  allPassed = (await assertEqual(['normal', 'warning', 'critical'].includes(result.severity), true, 'Anomaly severity valid')) && allPassed;
+
+  log('📊', `Z-score: ${result.z_score}, Severity: ${result.severity}`);
+
+  return allPassed;
+}
+
 async function main() {
   console.log('\n╔════════════════════════════════════════════════════════════╗');
   console.log('║           METERFLOW VALIDATION SCRIPT                      ║');
@@ -219,7 +252,10 @@ async function main() {
     // Step 6: Verify duplicate rejection
     allPassed = (await verifyDuplicateRejection()) && allPassed;
 
-    // Step 7: Cleanup
+    // Step 7: Verify Anomaly Detection API
+    allPassed = (await verifyAnomalyAPI()) && allPassed;
+
+    // Step 8: Cleanup
     await cleanup();
 
     console.log('\n' + '═'.repeat(60));
