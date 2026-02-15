@@ -219,6 +219,108 @@ async function verifyAnomalyAPI(): Promise<boolean> {
   return allPassed;
 }
 
+async function verifyPricingAPI(): Promise<boolean> {
+  log('🔍', 'Verifying Pricing API...');
+
+  let allPassed = true;
+
+  // Test list all pricing rules
+  const listResponse = await fetch(`${API_BASE}/v1/pricing`);
+  if (!listResponse.ok) {
+    log('❌', `Pricing list API returned status ${listResponse.status}`);
+    return false;
+  }
+
+  const listResult = await listResponse.json();
+  allPassed = (await assertEqual(Array.isArray(listResult.pricing), true, 'Pricing list is array')) && allPassed;
+  allPassed = (await assertEqual(listResult.pricing.length, 4, 'Pricing has 4 metrics')) && allPassed;
+
+  // Test get single pricing rule
+  const singleResponse = await fetch(`${API_BASE}/v1/pricing/api_calls`);
+  const singleResult = await singleResponse.json();
+  allPassed = (await assertEqual(singleResult.metric_code, 'api_calls', 'api_calls pricing found')) && allPassed;
+  allPassed = (await assertEqual(singleResult.model, 'tiered', 'api_calls is tiered')) && allPassed;
+  allPassed = (await assertEqual(singleResult.tiers?.length, 3, 'api_calls has 3 tiers')) && allPassed;
+
+  // Test 404 for unknown metric
+  const notFoundResponse = await fetch(`${API_BASE}/v1/pricing/unknown_metric`);
+  allPassed = (await assertEqual(notFoundResponse.status, 404, 'Unknown metric returns 404')) && allPassed;
+
+  return allPassed;
+}
+
+async function verifyInvoiceAPI(): Promise<boolean> {
+  log('🔍', 'Verifying Invoice API...');
+
+  const now = Date.now();
+  const start = now - 3600000; // 1 hour ago
+  const end = now + 3600000; // 1 hour from now
+
+  let allPassed = true;
+
+  // Calculate invoice for test customer
+  const response = await fetch(`${API_BASE}/v1/invoices/calculate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      customer_id: TEST_CUSTOMER,
+      start,
+      end,
+    }),
+  });
+
+  if (!response.ok) {
+    log('❌', `Invoice API returned status ${response.status}`);
+    return false;
+  }
+
+  const invoice = await response.json();
+
+  // Verify invoice structure
+  allPassed = (await assertEqual(invoice.customer_id, TEST_CUSTOMER, 'Invoice customer_id')) && allPassed;
+  allPassed = (await assertEqual(typeof invoice.invoice_id, 'string', 'Invoice has invoice_id')) && allPassed;
+  allPassed = (await assertEqual(invoice.status, 'draft', 'Invoice status is draft')) && allPassed;
+  allPassed = (await assertEqual(invoice.currency, 'USD', 'Invoice currency is USD')) && allPassed;
+  allPassed = (await assertEqual(Array.isArray(invoice.lines), true, 'Invoice has lines array')) && allPassed;
+
+  // Verify we have line items for api_calls (3 events) and bandwidth (3500 bytes) and storage_peak (100 GB)
+  const apiCallsLine = invoice.lines.find((l: any) => l.metric_code === 'api_calls');
+  const bandwidthLine = invoice.lines.find((l: any) => l.metric_code === 'bandwidth');
+  const storageLine = invoice.lines.find((l: any) => l.metric_code === 'storage_peak');
+
+  if (apiCallsLine) {
+    allPassed = (await assertEqual(apiCallsLine.quantity, 3, 'api_calls quantity')) && allPassed;
+    allPassed = (await assertEqual(apiCallsLine.unit_price_display, 'Tiered', 'api_calls is tiered')) && allPassed;
+    // 3 calls in free tier = $0
+    allPassed = (await assertEqual(apiCallsLine.subtotal, 0, 'api_calls subtotal (free tier)')) && allPassed;
+  } else {
+    log('❌', 'api_calls line not found');
+    allPassed = false;
+  }
+
+  if (bandwidthLine) {
+    allPassed = (await assertEqual(bandwidthLine.quantity, 3500, 'bandwidth quantity')) && allPassed;
+    // 3500 bytes × $0.00001 = $0.035 → rounds to $0.04
+    allPassed = (await assertEqual(bandwidthLine.subtotal, 0.04, 'bandwidth subtotal')) && allPassed;
+  } else {
+    log('❌', 'bandwidth line not found');
+    allPassed = false;
+  }
+
+  if (storageLine) {
+    allPassed = (await assertEqual(storageLine.quantity, 100, 'storage_peak quantity')) && allPassed;
+    // 100 GB × $0.10 = $10.00
+    allPassed = (await assertEqual(storageLine.subtotal, 10, 'storage_peak subtotal')) && allPassed;
+  } else {
+    log('❌', 'storage_peak line not found');
+    allPassed = false;
+  }
+
+  log('💵', `Invoice total: $${invoice.subtotal}`);
+
+  return allPassed;
+}
+
 async function main() {
   console.log('\n╔════════════════════════════════════════════════════════════╗');
   console.log('║           METERFLOW VALIDATION SCRIPT                      ║');
@@ -255,7 +357,13 @@ async function main() {
     // Step 7: Verify Anomaly Detection API
     allPassed = (await verifyAnomalyAPI()) && allPassed;
 
-    // Step 8: Cleanup
+    // Step 8: Verify Pricing API
+    allPassed = (await verifyPricingAPI()) && allPassed;
+
+    // Step 9: Verify Invoice API
+    allPassed = (await verifyInvoiceAPI()) && allPassed;
+
+    // Step 10: Cleanup
     await cleanup();
 
     console.log('\n' + '═'.repeat(60));

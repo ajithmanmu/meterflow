@@ -7,6 +7,11 @@ import {
   UsageQueryResponseSchema,
   AnomalyCheckSchema,
   AnomalyCheckResponseSchema,
+  PricingListResponseSchema,
+  PricingRuleSchema,
+  InvoiceCalculateRequestSchema,
+  InvoiceResponseSchema,
+  ErrorResponseSchema,
   UsageEvent,
   EventIngestionResponse,
 } from './schemas';
@@ -19,7 +24,9 @@ import { insertEvents } from '../utils/storage';
 import { backupEvents } from '../utils/backup';
 import { queryUsage } from '../utils/usage';
 import { checkAnomaly } from '../utils/anomaly';
+import { calculateInvoice } from '../utils/invoice';
 import { METRICS_CATALOG } from '../config/metrics';
+import { getAllPricingRules, getPricingRule } from '../config/pricing';
 
 const app = Fastify({
   logger: true,
@@ -180,6 +187,81 @@ app.get(
     });
 
     return reply.status(200).send(result);
+  }
+);
+
+/**
+ * GET /v1/pricing - List all pricing rules
+ */
+app.get(
+  '/v1/pricing',
+  {
+    schema: {
+      response: {
+        200: PricingListResponseSchema,
+      },
+    },
+  },
+  async () => {
+    return { pricing: getAllPricingRules() };
+  }
+);
+
+/**
+ * GET /v1/pricing/:metric_code - Get pricing for a specific metric
+ */
+app.get(
+  '/v1/pricing/:metric_code',
+  {
+    schema: {
+      response: {
+        200: PricingRuleSchema,
+        404: ErrorResponseSchema,
+      },
+    },
+  },
+  async (request, reply) => {
+    const { metric_code } = request.params as { metric_code: string };
+    const rule = getPricingRule(metric_code);
+
+    if (!rule) {
+      return reply.status(404).send({ error: `Pricing rule not found for metric: ${metric_code}` });
+    }
+
+    return rule;
+  }
+);
+
+/**
+ * POST /v1/invoices/calculate - Calculate invoice for a billing period
+ *
+ * Takes customer_id and billing period (start/end timestamps).
+ * Returns draft invoice with line items for each metric used.
+ *
+ * Supports:
+ * - Flat pricing: simple unit_price × quantity
+ * - Tiered pricing: progressive tiers with volume discounts
+ */
+app.post(
+  '/v1/invoices/calculate',
+  {
+    schema: {
+      body: InvoiceCalculateRequestSchema,
+      response: {
+        200: InvoiceResponseSchema,
+      },
+    },
+  },
+  async (request, reply) => {
+    const { customer_id, start, end } = request.body;
+
+    const invoice = await calculateInvoice({
+      customer_id,
+      start,
+      end,
+    });
+
+    return reply.status(200).send(invoice);
   }
 );
 

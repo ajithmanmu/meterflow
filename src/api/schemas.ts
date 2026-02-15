@@ -99,6 +99,88 @@ export const AnomalyCheckResponseSchema = Type.Object({
   unit: Type.String(),
 });
 
+/**
+ * Pricing tier schema
+ */
+export const PricingTierSchema = Type.Object({
+  up_to: Type.Union([Type.Number(), Type.Null()]),
+  unit_price: Type.Number(),
+});
+
+/**
+ * Pricing rule schema
+ */
+export const PricingRuleSchema = Type.Object({
+  metric_code: Type.String(),
+  model: Type.Union([Type.Literal('flat'), Type.Literal('tiered')]),
+  currency: Type.String(),
+  unit_price: Type.Optional(Type.Number()),
+  tiers: Type.Optional(Type.Array(PricingTierSchema)),
+});
+
+/**
+ * Pricing list response schema
+ */
+export const PricingListResponseSchema = Type.Object({
+  pricing: Type.Array(PricingRuleSchema),
+});
+
+/**
+ * Error response schema
+ */
+export const ErrorResponseSchema = Type.Object({
+  error: Type.String(),
+});
+
+/**
+ * Invoice calculation request schema (body)
+ */
+export const InvoiceCalculateRequestSchema = Type.Object({
+  customer_id: Type.String({ minLength: 1 }),
+  start: Type.Number({ minimum: 0 }),
+  end: Type.Number({ minimum: 0 }),
+});
+
+/**
+ * Invoice tier breakdown schema
+ */
+export const TierBreakdownSchema = Type.Object({
+  tier: Type.String(),
+  quantity: Type.Number(),
+  unit_price: Type.Number(),
+  amount: Type.Number(),
+});
+
+/**
+ * Invoice line schema
+ */
+export const InvoiceLineSchema = Type.Object({
+  metric_code: Type.String(),
+  metric_name: Type.String(),
+  quantity: Type.Number(),
+  unit: Type.String(),
+  unit_price_display: Type.String(),
+  subtotal: Type.Number(),
+  tier_breakdown: Type.Optional(Type.Array(TierBreakdownSchema)),
+});
+
+/**
+ * Invoice response schema
+ */
+export const InvoiceResponseSchema = Type.Object({
+  invoice_id: Type.String(),
+  customer_id: Type.String(),
+  period: Type.Object({
+    start: Type.Number(),
+    end: Type.Number(),
+  }),
+  lines: Type.Array(InvoiceLineSchema),
+  subtotal: Type.Number(),
+  currency: Type.String(),
+  generated_at: Type.Number(),
+  status: Type.Union([Type.Literal('draft'), Type.Literal('finalized')]),
+});
+
 // TypeScript types derived from schemas
 export type UsageEvent = Static<typeof UsageEventSchema>;
 export type BatchEventRequest = Static<typeof BatchEventRequestSchema>;
@@ -107,3 +189,6 @@ export type UsageQuery = Static<typeof UsageQuerySchema>;
 export type UsageQueryResponse = Static<typeof UsageQueryResponseSchema>;
 export type AnomalyCheck = Static<typeof AnomalyCheckSchema>;
 export type AnomalyCheckResponse = Static<typeof AnomalyCheckResponseSchema>;
+export type PricingRule = Static<typeof PricingRuleSchema>;
+export type InvoiceCalculateRequest = Static<typeof InvoiceCalculateRequestSchema>;
+export type InvoiceResponse = Static<typeof InvoiceResponseSchema>;
