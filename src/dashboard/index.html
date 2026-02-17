@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MeterFlow Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 30px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid #334155;
+    }
+
+    h1 {
+      font-size: 24px;
+      font-weight: 600;
+      color: #f8fafc;
+    }
+
+    .controls {
+      display: flex;
+      gap: 15px;
+      align-items: center;
+    }
+
+    select, input {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #e2e8f0;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+
+    button {
+      background: #3b82f6;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    button:hover {
+      background: #2563eb;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-bottom: 20px;
+    }
+
+    .card {
+      background: #1e293b;
+      border-radius: 12px;
+      padding: 20px;
+      border: 1px solid #334155;
+    }
+
+    .card.full-width {
+      grid-column: 1 / -1;
+    }
+
+    .card h2 {
+      font-size: 16px;
+      font-weight: 500;
+      color: #94a3b8;
+      margin-bottom: 15px;
+    }
+
+    .chart-container {
+      position: relative;
+      height: 250px;
+    }
+
+    .alert-panel {
+      margin-top: 20px;
+    }
+
+    .alert {
+      padding: 15px 20px;
+      border-radius: 8px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    .alert.fraud {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid #ef4444;
+    }
+
+    .alert.normal {
+      background: rgba(34, 197, 94, 0.15);
+      border: 1px solid #22c55e;
+    }
+
+    .alert-icon {
+      font-size: 20px;
+    }
+
+    .alert-content h3 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 5px;
+    }
+
+    .alert-content p {
+      font-size: 13px;
+      color: #94a3b8;
+      line-height: 1.5;
+    }
+
+    .stats {
+      display: flex;
+      gap: 30px;
+      margin-top: 15px;
+    }
+
+    .stat {
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 28px;
+      font-weight: 700;
+      color: #f8fafc;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      color: #64748b;
+      margin-top: 4px;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #64748b;
+    }
+
+    .error {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid #ef4444;
+      padding: 15px;
+      border-radius: 8px;
+      color: #fca5a5;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>MeterFlow Dashboard</h1>
+      <div class="controls">
+        <input type="text" id="customerId" placeholder="Customer ID" value="test_customer">
+        <select id="metric">
+          <option value="api_calls">API Calls</option>
+          <option value="bandwidth">Bandwidth</option>
+          <option value="storage_peak">Storage Peak</option>
+          <option value="compute_time">Compute Time</option>
+        </select>
+        <button onclick="loadDashboard()">Refresh</button>
+      </div>
+    </header>
+
+    <div id="content">
+      <div class="loading">Loading dashboard data...</div>
+    </div>
+  </div>
+
+  <script>
+    let usageChart = null;
+    let patternChart = null;
+
+    async function loadDashboard() {
+      const customerId = document.getElementById('customerId').value;
+      const metric = document.getElementById('metric').value;
+      const content = document.getElementById('content');
+
+      try {
+        const response = await fetch(`/v1/dashboard/data?customer_id=${customerId}&metric=${metric}&days=30`);
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        renderDashboard(data);
+      } catch (error) {
+        content.innerHTML = `<div class="error">Error loading dashboard: ${error.message}</div>`;
+      }
+    }
+
+    function renderDashboard(data) {
+      const content = document.getElementById('content');
+
+      // Calculate stats
+      const totalUsage = data.usage_history.reduce((sum, d) => sum + d.total, 0);
+      const anomalyCount = data.usage_history.filter(d => d.is_anomaly).length;
+      const similarity = data.latest_check ? (data.latest_check.similarity * 100).toFixed(1) : 'N/A';
+
+      content.innerHTML = `
+        <div class="grid">
+          <div class="card full-width">
+            <h2>USAGE OVER TIME (30 Days)</h2>
+            <div class="chart-container">
+              <canvas id="usageChart"></canvas>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>HOURLY PATTERN - BASELINE (Expected)</h2>
+            <div class="chart-container">
+              <canvas id="baselineChart"></canvas>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>HOURLY PATTERN - TODAY (Actual)</h2>
+            <div class="chart-container">
+              <canvas id="currentChart"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>STATS</h2>
+          <div class="stats">
+            <div class="stat">
+              <div class="stat-value">${totalUsage.toLocaleString()}</div>
+              <div class="stat-label">Total Usage (30d)</div>
+            </div>
+            <div class="stat">
+              <div class="stat-value">${similarity}%</div>
+              <div class="stat-label">Pattern Similarity</div>
+            </div>
+            <div class="stat">
+              <div class="stat-value">${anomalyCount}</div>
+              <div class="stat-label">Anomalies Detected</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="alert-panel">
+          <div class="card">
+            <h2>ALERTS</h2>
+            <div id="alerts"></div>
+          </div>
+        </div>
+      `;
+
+      // Render charts
+      renderUsageChart(data.usage_history);
+      renderPatternCharts(data.baseline_pattern, data.current_pattern);
+      renderAlerts(data.latest_check);
+    }
+
+    function renderUsageChart(history) {
+      const ctx = document.getElementById('usageChart').getContext('2d');
+
+      if (usageChart) {
+        usageChart.destroy();
+      }
+
+      const labels = history.map(d => d.date.slice(5)); // MM-DD
+      const values = history.map(d => d.total);
+      const colors = history.map(d => d.is_anomaly ? '#ef4444' : '#3b82f6');
+
+      usageChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Usage',
+            data: values,
+            backgroundColor: colors,
+            borderRadius: 4,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false }
+          },
+          scales: {
+            x: {
+              grid: { color: '#334155' },
+              ticks: { color: '#64748b' }
+            },
+            y: {
+              grid: { color: '#334155' },
+              ticks: { color: '#64748b' }
+            }
+          }
+        }
+      });
+    }
+
+    function renderPatternCharts(baseline, current) {
+      const hours = Array.from({ length: 24 }, (_, i) => `${i}:00`);
+
+      // Baseline chart
+      const baselineCtx = document.getElementById('baselineChart').getContext('2d');
+      new Chart(baselineCtx, {
+        type: 'bar',
+        data: {
+          labels: hours,
+          datasets: [{
+            label: 'Expected',
+            data: baseline,
+            backgroundColor: '#3b82f6',
+            borderRadius: 2,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { color: '#334155' }, ticks: { color: '#64748b', maxRotation: 0 } },
+            y: { grid: { color: '#334155' }, ticks: { color: '#64748b' } }
+          }
+        }
+      });
+
+      // Current chart
+      const currentCtx = document.getElementById('currentChart').getContext('2d');
+      new Chart(currentCtx, {
+        type: 'bar',
+        data: {
+          labels: hours,
+          datasets: [{
+            label: 'Actual',
+            data: current,
+            backgroundColor: '#f97316',
+            borderRadius: 2,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { grid: { color: '#334155' }, ticks: { color: '#64748b', maxRotation: 0 } },
+            y: { grid: { color: '#334155' }, ticks: { color: '#64748b' } }
+          }
+        }
+      });
+    }
+
+    function renderAlerts(latestCheck) {
+      const alertsDiv = document.getElementById('alerts');
+
+      if (!latestCheck) {
+        alertsDiv.innerHTML = '<p style="color: #64748b;">No baseline data available. Run baseline build first.</p>';
+        return;
+      }
+
+      if (latestCheck.is_fraud) {
+        alertsDiv.innerHTML = `
+          <div class="alert fraud">
+            <span class="alert-icon">&#128308;</span>
+            <div class="alert-content">
+              <h3>FRAUD DETECTED - ${latestCheck.date}</h3>
+              <p>
+                Pattern similarity: ${(latestCheck.similarity * 100).toFixed(1)}% (threshold: 90%)<br>
+                Volume change: ${latestCheck.volume_change_percent > 0 ? '+' : ''}${latestCheck.volume_change_percent.toFixed(1)}%<br>
+                Type: ${latestCheck.fraud_type || 'pattern'} anomaly<br>
+                <strong>Possible cause:</strong> API key may be compromised and used from different timezone
+              </p>
+            </div>
+          </div>
+        `;
+      } else if (latestCheck.similarity < 0.9) {
+        alertsDiv.innerHTML = `
+          <div class="alert fraud">
+            <span class="alert-icon">&#9888;&#65039;</span>
+            <div class="alert-content">
+              <h3>PATTERN WARNING - ${latestCheck.date}</h3>
+              <p>
+                Pattern similarity: ${(latestCheck.similarity * 100).toFixed(1)}% (threshold: 90%)<br>
+                Volume change: ${latestCheck.volume_change_percent > 0 ? '+' : ''}${latestCheck.volume_change_percent.toFixed(1)}%<br>
+                Usage pattern differs from baseline, but volume change is significant.
+              </p>
+            </div>
+          </div>
+        `;
+      } else {
+        alertsDiv.innerHTML = `
+          <div class="alert normal">
+            <span class="alert-icon">&#9989;</span>
+            <div class="alert-content">
+              <h3>ALL CLEAR - ${latestCheck.date}</h3>
+              <p>
+                Pattern similarity: ${(latestCheck.similarity * 100).toFixed(1)}%<br>
+                Volume change: ${latestCheck.volume_change_percent > 0 ? '+' : ''}${latestCheck.volume_change_percent.toFixed(1)}%<br>
+                Usage patterns are within normal parameters.
+              </p>
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    // Load on page load
+    document.addEventListener('DOMContentLoaded', loadDashboard);
+  </script>
+</body>
+</html>

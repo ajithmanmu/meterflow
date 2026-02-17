@@ -1,4 +1,6 @@
 import Fastify from 'fastify';
+import fastifyStatic from '@fastify/static';
+import path from 'path';
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import {
   BatchEventRequestSchema,
@@ -12,6 +14,12 @@ import {
   InvoiceCalculateRequestSchema,
   InvoiceResponseSchema,
   ErrorResponseSchema,
+  BuildBaselinesRequestSchema,
+  BuildBaselinesResponseSchema,
+  FraudCheckRequestSchema,
+  FraudCheckResponseSchema,
+  DashboardDataRequestSchema,
+  DashboardDataResponseSchema,
   UsageEvent,
   EventIngestionResponse,
 } from './schemas';
@@ -25,12 +33,19 @@ import { backupEvents } from '../utils/backup';
 import { queryUsage } from '../utils/usage';
 import { checkAnomaly } from '../utils/anomaly';
 import { calculateInvoice } from '../utils/invoice';
+import { buildBaselines, checkFraud, getDashboardData } from '../utils/fraud';
 import { METRICS_CATALOG } from '../config/metrics';
 import { getAllPricingRules, getPricingRule } from '../config/pricing';
 
 const app = Fastify({
   logger: true,
 }).withTypeProvider<TypeBoxTypeProvider>();
+
+// Serve dashboard static files
+app.register(fastifyStatic, {
+  root: path.join(__dirname, '../dashboard'),
+  prefix: '/dashboard/',
+});
 
 /**
  * POST /v1/events - Ingest batch of usage events
@@ -262,6 +277,97 @@ app.post(
     });
 
     return reply.status(200).send(invoice);
+  }
+);
+
+/**
+ * POST /v1/fraud/baselines/build - Build fraud detection baselines
+ *
+ * Processes historical data to create weekday baseline vectors.
+ * Should be run after accumulating enough history (7+ days).
+ */
+app.post(
+  '/v1/fraud/baselines/build',
+  {
+    schema: {
+      body: BuildBaselinesRequestSchema,
+      response: {
+        200: BuildBaselinesResponseSchema,
+      },
+    },
+  },
+  async (request, reply) => {
+    const { customer_id, metric, days } = request.body;
+
+    const result = await buildBaselines({
+      customer_id,
+      metric,
+      days,
+    });
+
+    return reply.status(200).send(result);
+  }
+);
+
+/**
+ * GET /v1/fraud/check - Check for fraud using pattern analysis
+ *
+ * Compares current day's hourly usage pattern against baseline.
+ * Uses cosine similarity - threshold < 0.9 indicates pattern anomaly.
+ *
+ * This detects fraud that volume-based detection misses:
+ * - Stolen API keys used from different timezones
+ * - Bot attacks at unusual hours
+ * - Changed integration behavior
+ */
+app.get(
+  '/v1/fraud/check',
+  {
+    schema: {
+      querystring: FraudCheckRequestSchema,
+      response: {
+        200: FraudCheckResponseSchema,
+      },
+    },
+  },
+  async (request, reply) => {
+    const { customer_id, metric, date } = request.query;
+
+    const result = await checkFraud({
+      customer_id,
+      metric,
+      date,
+    });
+
+    return reply.status(200).send(result);
+  }
+);
+
+/**
+ * GET /v1/dashboard/data - Get data for dashboard visualization
+ *
+ * Returns usage history, current pattern, baseline pattern, and anomaly info.
+ */
+app.get(
+  '/v1/dashboard/data',
+  {
+    schema: {
+      querystring: DashboardDataRequestSchema,
+      response: {
+        200: DashboardDataResponseSchema,
+      },
+    },
+  },
+  async (request, reply) => {
+    const { customer_id, metric, days } = request.query;
+
+    const result = await getDashboardData({
+      customer_id,
+      metric,
+      days: days ?? 30,
+    });
+
+    return reply.status(200).send(result);
   }
 );
 

@@ -181,6 +181,82 @@ export const InvoiceResponseSchema = Type.Object({
   status: Type.Union([Type.Literal('draft'), Type.Literal('finalized')]),
 });
 
+/**
+ * Build baselines request schema
+ */
+export const BuildBaselinesRequestSchema = Type.Object({
+  customer_id: Type.String({ minLength: 1 }),
+  metric: Type.String({ minLength: 1 }),
+  days: Type.Number({ minimum: 7, maximum: 90 }),
+});
+
+/**
+ * Build baselines response schema
+ */
+export const BuildBaselinesResponseSchema = Type.Object({
+  customer_id: Type.String(),
+  metric: Type.String(),
+  days_processed: Type.Number(),
+  weekdays_built: Type.Array(Type.String()),
+});
+
+/**
+ * Fraud check request schema (query params)
+ */
+export const FraudCheckRequestSchema = Type.Object({
+  customer_id: Type.String({ minLength: 1 }),
+  metric: Type.String({ minLength: 1 }),
+  date: Type.String(), // YYYY-MM-DD
+});
+
+/**
+ * Fraud check response schema
+ */
+export const FraudCheckResponseSchema = Type.Object({
+  customer_id: Type.String(),
+  metric: Type.String(),
+  date: Type.String(),
+  similarity: Type.Number(),
+  volume_change_percent: Type.Number(),
+  is_fraud: Type.Boolean(),
+  fraud_type: Type.Optional(
+    Type.Union([Type.Literal('pattern'), Type.Literal('volume'), Type.Literal('both')])
+  ),
+  current_vector: Type.Array(Type.Number()),
+  baseline_vector: Type.Array(Type.Number()),
+  baseline_volume: Type.Number(),
+});
+
+/**
+ * Dashboard data request schema (query params)
+ */
+export const DashboardDataRequestSchema = Type.Object({
+  customer_id: Type.String({ minLength: 1 }),
+  metric: Type.String({ minLength: 1 }),
+  days: Type.Optional(Type.Number({ minimum: 1, maximum: 90 })),
+});
+
+/**
+ * Dashboard data response schema
+ */
+export const DashboardDataResponseSchema = Type.Object({
+  customer_id: Type.String(),
+  metric: Type.String(),
+  usage_history: Type.Array(
+    Type.Object({
+      date: Type.String(),
+      total: Type.Number(),
+      is_anomaly: Type.Boolean(),
+      anomaly_type: Type.Optional(
+        Type.Union([Type.Literal('pattern'), Type.Literal('volume'), Type.Literal('both')])
+      ),
+    })
+  ),
+  current_pattern: Type.Array(Type.Number()),
+  baseline_pattern: Type.Array(Type.Number()),
+  latest_check: Type.Optional(FraudCheckResponseSchema),
+});
+
 // TypeScript types derived from schemas
 export type UsageEvent = Static<typeof UsageEventSchema>;
 export type BatchEventRequest = Static<typeof BatchEventRequestSchema>;
@@ -192,3 +268,6 @@ export type AnomalyCheckResponse = Static<typeof AnomalyCheckResponseSchema>;
 export type PricingRule = Static<typeof PricingRuleSchema>;
 export type InvoiceCalculateRequest = Static<typeof InvoiceCalculateRequestSchema>;
 export type InvoiceResponse = Static<typeof InvoiceResponseSchema>;
+export type BuildBaselinesRequest = Static<typeof BuildBaselinesRequestSchema>;
+export type FraudCheckRequest = Static<typeof FraudCheckRequestSchema>;
+export type DashboardDataRequest = Static<typeof DashboardDataRequestSchema>;

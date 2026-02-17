@@ -321,6 +321,54 @@ async function verifyInvoiceAPI(): Promise<boolean> {
   return allPassed;
 }
 
+async function verifyFraudDetectionAPI(): Promise<boolean> {
+  log('🔍', 'Verifying Fraud Detection API...');
+
+  let allPassed = true;
+
+  // Test fraud check endpoint (should return valid response structure)
+  const today = new Date().toISOString().split('T')[0];
+  const fraudCheckRes = await fetch(
+    `${API_BASE}/v1/fraud/check?customer_id=${TEST_CUSTOMER}&metric=api_calls&date=${today}`
+  );
+
+  if (!fraudCheckRes.ok) {
+    log('❌', `Fraud check API returned status ${fraudCheckRes.status}`);
+    return false;
+  }
+
+  const fraudCheck = await fraudCheckRes.json();
+
+  // Verify response structure
+  allPassed = (await assertEqual(fraudCheck.customer_id, TEST_CUSTOMER, 'Fraud check customer_id')) && allPassed;
+  allPassed = (await assertEqual(fraudCheck.metric, 'api_calls', 'Fraud check metric')) && allPassed;
+  allPassed = (await assertEqual(typeof fraudCheck.similarity, 'number', 'Fraud check has similarity')) && allPassed;
+  allPassed = (await assertEqual(typeof fraudCheck.is_fraud, 'boolean', 'Fraud check has is_fraud')) && allPassed;
+  allPassed = (await assertEqual(Array.isArray(fraudCheck.current_vector), true, 'Fraud check has current_vector')) && allPassed;
+  allPassed = (await assertEqual(fraudCheck.current_vector.length, 24, 'Current vector has 24 hours')) && allPassed;
+
+  log('🔐', `Similarity: ${(fraudCheck.similarity * 100).toFixed(1)}%, Fraud: ${fraudCheck.is_fraud}`);
+
+  // Test dashboard data endpoint
+  const dashboardRes = await fetch(
+    `${API_BASE}/v1/dashboard/data?customer_id=${TEST_CUSTOMER}&metric=api_calls&days=7`
+  );
+
+  if (!dashboardRes.ok) {
+    log('❌', `Dashboard API returned status ${dashboardRes.status}`);
+    return false;
+  }
+
+  const dashboard = await dashboardRes.json();
+
+  allPassed = (await assertEqual(dashboard.customer_id, TEST_CUSTOMER, 'Dashboard customer_id')) && allPassed;
+  allPassed = (await assertEqual(Array.isArray(dashboard.usage_history), true, 'Dashboard has usage_history')) && allPassed;
+  allPassed = (await assertEqual(Array.isArray(dashboard.current_pattern), true, 'Dashboard has current_pattern')) && allPassed;
+  allPassed = (await assertEqual(dashboard.current_pattern.length, 24, 'Current pattern has 24 hours')) && allPassed;
+
+  return allPassed;
+}
+
 async function main() {
   console.log('\n╔════════════════════════════════════════════════════════════╗');
   console.log('║           METERFLOW VALIDATION SCRIPT                      ║');
@@ -363,7 +411,10 @@ async function main() {
     // Step 9: Verify Invoice API
     allPassed = (await verifyInvoiceAPI()) && allPassed;
 
-    // Step 10: Cleanup
+    // Step 10: Verify Fraud Detection API
+    allPassed = (await verifyFraudDetectionAPI()) && allPassed;
+
+    // Step 11: Cleanup
     await cleanup();
 
     console.log('\n' + '═'.repeat(60));
