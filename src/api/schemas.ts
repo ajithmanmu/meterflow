@@ -133,6 +133,47 @@ export const ErrorResponseSchema = Type.Object({
 });
 
 /**
+ * Rate limit exceeded response schema
+ */
+export const RateLimitResponseSchema = Type.Object({
+  error: Type.String(),
+  retry_after_seconds: Type.Number(),
+});
+
+/**
+ * Provision API Key request schema
+ */
+export const ProvisionKeyRequestSchema = Type.Object({
+  customer_id: Type.String({ minLength: 1, maxLength: 255 }),
+  name: Type.String({ minLength: 1, maxLength: 255 }),
+  rate_limit: Type.Optional(Type.Number({ minimum: 1, maximum: 10000 })),
+});
+
+/**
+ * Provision API Key response schema
+ */
+export const ProvisionKeyResponseSchema = Type.Object({
+  api_key: Type.String(),
+  customer_id: Type.String(),
+  name: Type.String(),
+  rate_limit: Type.Number(),
+});
+
+/**
+ * Revoke API Key request schema
+ */
+export const RevokeKeyRequestSchema = Type.Object({
+  api_key: Type.String({ minLength: 1 }),
+});
+
+/**
+ * Revoke API Key response schema
+ */
+export const RevokeKeyResponseSchema = Type.Object({
+  revoked: Type.Boolean(),
+});
+
+/**
  * Invoice calculation request schema (body)
  */
 export const InvoiceCalculateRequestSchema = Type.Object({
@@ -255,6 +296,41 @@ export const DashboardDataResponseSchema = Type.Object({
   current_pattern: Type.Array(Type.Number()),
   baseline_pattern: Type.Array(Type.Number()),
   latest_check: Type.Optional(FraudCheckResponseSchema),
+});
+
+/**
+ * Billing run request schema (body)
+ */
+export const BillingRunRequestSchema = Type.Object({
+  customer_id: Type.String({ minLength: 1 }),
+  start: Type.Number({ minimum: 0 }),
+  end: Type.Number({ minimum: 0 }),
+});
+
+/**
+ * Stripe operation schema
+ */
+export const StripeOperationSchema = Type.Object({
+  step: Type.Number(),
+  action: Type.String(),
+  payload: Type.Record(Type.String(), Type.Unknown()),
+});
+
+/**
+ * Billing run response schema
+ */
+export const BillingRunResponseSchema = Type.Object({
+  invoice: InvoiceResponseSchema,
+  stripe_operations: Type.Object({
+    mode: Type.Literal('dry_run'),
+    operations: Type.Array(StripeOperationSchema),
+    summary: Type.Object({
+      total_amount_cents: Type.Number(),
+      currency: Type.String(),
+      line_items: Type.Number(),
+      idempotency_key: Type.String(),
+    }),
+  }),
 });
 
 // TypeScript types derived from schemas

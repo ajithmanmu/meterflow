@@ -12,6 +12,7 @@
 
 const API_BASE = 'http://localhost:3000';
 const TEST_CUSTOMER = 'test_customer';
+let API_KEY = '';
 
 // FRAUDULENT pattern - peaks at night instead of business hours
 // This is roughly the inverse of business hours
@@ -78,7 +79,7 @@ async function generateFraudulentEvents(): Promise<number> {
 
     const response = await fetch(`${API_BASE}/v1/events`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
       body: JSON.stringify({ events: batch }),
     });
 
@@ -124,6 +125,17 @@ async function main() {
     console.error('Server not available. Run: pnpm dev');
     process.exit(1);
   }
+
+  // Provision API key for simulation
+  log('...', 'Provisioning API key...');
+  const keyRes = await fetch(`${API_BASE}/v1/admin/keys`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customer_id: TEST_CUSTOMER, name: 'simulate-fraud' }),
+  });
+  const keyData = await keyRes.json() as { api_key: string };
+  API_KEY = keyData.api_key;
+  log('OK', `API key provisioned: ${API_KEY.slice(0, 12)}...`);
 
   const count = await generateFraudulentEvents();
 

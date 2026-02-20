@@ -11,6 +11,7 @@
 
 const API_BASE = 'http://localhost:3000';
 const TEST_CUSTOMER = 'test_customer';
+let API_KEY = '';
 
 // Business hours distribution (normalized weights for each hour)
 // Peak hours: 9am-5pm, low hours: 10pm-6am
@@ -87,7 +88,7 @@ async function generateEventsForDay(date: Date): Promise<number> {
 
     const response = await fetch(`${API_BASE}/v1/events`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
       body: JSON.stringify({ events: batch }),
     });
 
@@ -129,6 +130,17 @@ async function main() {
     console.error('Server not available. Run: pnpm dev');
     process.exit(1);
   }
+
+  // Provision API key for simulation
+  log('...', 'Provisioning API key...');
+  const keyRes = await fetch(`${API_BASE}/v1/admin/keys`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customer_id: TEST_CUSTOMER, name: 'simulate-history' }),
+  });
+  const keyData = await keyRes.json() as { api_key: string };
+  API_KEY = keyData.api_key;
+  log('OK', `API key provisioned: ${API_KEY.slice(0, 12)}...`);
 
   // Generate 30 days of history (starting from 31 days ago to yesterday)
   const endDate = new Date();

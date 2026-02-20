@@ -20,6 +20,12 @@ import {
   FraudCheckResponseSchema,
   DashboardDataRequestSchema,
   DashboardDataResponseSchema,
+  ProvisionKeyRequestSchema,
+  ProvisionKeyResponseSchema,
+  RevokeKeyRequestSchema,
+  RevokeKeyResponseSchema,
+  BillingRunRequestSchema,
+  BillingRunResponseSchema,
   UsageEvent,
   EventIngestionResponse,
 } from './schemas';
@@ -33,9 +39,14 @@ import { backupEvents } from '../utils/backup';
 import { queryUsage } from '../utils/usage';
 import { checkAnomaly } from '../utils/anomaly';
 import { calculateInvoice } from '../utils/invoice';
+import { runBillingCycle } from '../utils/billing';
 import { buildBaselines, checkFraud, getDashboardData } from '../utils/fraud';
 import { METRICS_CATALOG } from '../config/metrics';
 import { getAllPricingRules, getPricingRule } from '../config/pricing';
+import { authenticateHook } from './hooks/authenticate';
+import { rateLimitHook } from './hooks/ratelimit';
+import { provisionApiKey, revokeApiKey } from '../utils/auth';
+import { DEFAULT_RATE_LIMIT } from '../config/auth';
 
 const app = Fastify({
   logger: true,
@@ -46,6 +57,10 @@ app.register(fastifyStatic, {
   root: path.join(__dirname, '../dashboard'),
   prefix: '/dashboard/',
 });
+
+// Authentication and rate limiting hooks (order matters: auth first, then rate limit)
+app.addHook('preHandler', authenticateHook);
+app.addHook('preHandler', rateLimitHook);
 
 /**
  * POST /v1/events - Ingest batch of usage events
@@ -281,6 +296,42 @@ app.post(
 );
 
 /**
+ * POST /v1/billing/run - Run a billing cycle (dry-run)
+ *
+ * Calculates a usage-based invoice and produces the exact Stripe API
+ * payloads that would be executed to bill the customer.
+ *
+ * This is a dry-run: no Stripe calls are made. The response shows:
+ * 1. The MeterFlow invoice (usage × pricing = line items)
+ * 2. The Stripe operations: create invoice → add items → finalize → send
+ *
+ * In production, this would run as a scheduled Lambda at the end of each
+ * billing period, calling Stripe's real API instead of returning payloads.
+ */
+app.post(
+  '/v1/billing/run',
+  {
+    schema: {
+      body: BillingRunRequestSchema,
+      response: {
+        200: BillingRunResponseSchema,
+      },
+    },
+  },
+  async (request, reply) => {
+    const { customer_id, start, end } = request.body;
+
+    const result = await runBillingCycle({
+      customer_id,
+      start,
+      end,
+    });
+
+    return reply.status(200).send(result);
+  }
+);
+
+/**
  * POST /v1/fraud/baselines/build - Build fraud detection baselines
  *
  * Processes historical data to create weekday baseline vectors.
@@ -368,6 +419,56 @@ app.get(
     });
 
     return reply.status(200).send(result);
+  }
+);
+
+/**
+ * POST /v1/admin/keys - Provision a new API key
+ *
+ * Creates an API key scoped to a customer_id.
+ * In production, this would be behind admin auth (JWT with admin role,
+ * internal network only, etc.). Open for demo purposes.
+ */
+app.post(
+  '/v1/admin/keys',
+  {
+    schema: {
+      body: ProvisionKeyRequestSchema,
+      response: {
+        200: ProvisionKeyResponseSchema,
+      },
+    },
+  },
+  async (request, reply) => {
+    const { customer_id, name, rate_limit } = request.body;
+    const apiKey = await provisionApiKey({ customer_id, name, rate_limit });
+
+    return reply.status(200).send({
+      api_key: apiKey,
+      customer_id,
+      name,
+      rate_limit: rate_limit ?? DEFAULT_RATE_LIMIT,
+    });
+  }
+);
+
+/**
+ * POST /v1/admin/keys/revoke - Revoke an API key
+ */
+app.post(
+  '/v1/admin/keys/revoke',
+  {
+    schema: {
+      body: RevokeKeyRequestSchema,
+      response: {
+        200: RevokeKeyResponseSchema,
+      },
+    },
+  },
+  async (request, reply) => {
+    const { api_key } = request.body;
+    const revoked = await revokeApiKey(api_key);
+    return reply.status(200).send({ revoked });
   }
 );
 
