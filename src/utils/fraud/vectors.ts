@@ -14,7 +14,7 @@ import { HourlyVector } from '../../types/fraud';
 export function getWeekday(date: string): string {
   const days = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
   const d = new Date(date);
-  return days[d.getDay()];
+  return days[d.getUTCDay()];
 }
 
 /**

@@ -386,7 +386,19 @@
         return;
       }
 
-      if (latestCheck.is_fraud) {
+      if (latestCheck.volume_change_percent === -100) {
+        alertsDiv.innerHTML = `
+          <div class="alert normal">
+            <span class="alert-icon">&#8505;&#65039;</span>
+            <div class="alert-content">
+              <h3>NO DATA TODAY - ${latestCheck.date}</h3>
+              <p>
+                No events ingested for today yet. Pattern comparison requires today's usage data.
+              </p>
+            </div>
+          </div>
+        `;
+      } else if (latestCheck.is_fraud) {
         alertsDiv.innerHTML = `
           <div class="alert fraud">
             <span class="alert-icon">&#128308;</span>

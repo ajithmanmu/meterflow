@@ -38,7 +38,7 @@ function randomVariance(base: number, variance: number): number {
 }
 
 function isWeekend(date: Date): boolean {
-  const day = date.getDay();
+  const day = date.getUTCDay();
   return day === 0 || day === 6;
 }
 
@@ -65,7 +65,7 @@ async function generateEventsForDay(date: Date): Promise<number> {
       const second = Math.floor(Math.random() * 60);
 
       const timestamp = new Date(date);
-      timestamp.setHours(hour, minute, second, 0);
+      timestamp.setUTCHours(hour, minute, second, 0);
 
       events.push({
         transaction_id: `hist_${dateStr}_${hour}_${i}_${Math.random().toString(36).slice(2, 8)}`,
@@ -133,10 +133,10 @@ async function main() {
   // Generate 30 days of history (starting from 31 days ago to yesterday)
   const endDate = new Date();
   endDate.setDate(endDate.getDate() - 1); // Yesterday
-  endDate.setHours(0, 0, 0, 0);
+  endDate.setUTCHours(0, 0, 0, 0);
 
   const startDate = new Date(endDate);
-  startDate.setDate(startDate.getDate() - 29); // 30 days total
+  startDate.setDate(startDate.getDate() - 28); // 29 days total (avoids 30-day validation boundary)
 
   let totalEvents = 0;
 

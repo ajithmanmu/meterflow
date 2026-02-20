@@ -51,7 +51,7 @@ async function generateFraudulentEvents(): Promise<number> {
       const second = Math.floor(Math.random() * 60);
 
       const timestamp = new Date(today);
-      timestamp.setHours(hour, minute, second, 0);
+      timestamp.setUTCHours(hour, minute, second, 0);
 
       // Only include events that are in the past
       if (timestamp > new Date()) {

@@ -9,6 +9,7 @@
     "validate": "tsx scripts/validate.ts",
     "simulate:history": "tsx scripts/simulate-history.ts",
     "simulate:fraud": "tsx scripts/simulate-fraud.ts",
+    "demo:reset": "tsx scripts/demo-reset.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
