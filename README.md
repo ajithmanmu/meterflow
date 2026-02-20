@@ -115,6 +115,16 @@ pnpm validate    # 60 checks: auth, rate limits, ingestion, dedup, usage, anomal
 
 This demo simulates a stolen API key scenario. The attacker makes the same number of calls per day (to avoid volume-based detection) but from a different timezone — so the hourly pattern is completely different.
 
+**Normal usage** — 30 days of business-hours traffic. Baseline shows the expected 9am–5pm bell curve:
+
+![Dashboard showing normal usage pattern](docs/images/dashboard-normal.png)
+
+**After injecting fraudulent events** — the attacker's night-time pattern (orange) is the inverse of the baseline. Cosine similarity drops to 30.2% (threshold: 90%), triggering a fraud alert:
+
+![Dashboard showing fraud detected](docs/images/dashboard-fraud.png)
+
+### Run the demo yourself
+
 ```bash
 # 1. Start fresh
 pnpm demo:reset
@@ -134,7 +144,6 @@ open http://localhost:3000/dashboard/
 pnpm simulate:fraud
 
 # 6. Refresh dashboard — shows FRAUD DETECTED with ~30% similarity
-#    (normal pattern has ~100% similarity, threshold is 90%)
 ```
 
 ## API Reference
