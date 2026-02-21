@@ -19,6 +19,7 @@ This document is designed to be read top-to-bottom. Each section builds on the p
 9. [Fraud Detection (Vector Similarity)](#9-fraud-detection-vector-similarity)
 10. [Pricing & Invoicing](#10-pricing--invoicing)
 11. [Billing & Stripe](#11-billing--stripe)
+12. [Deep Dive: Async Ingestion & Back-Pressure](#12-deep-dive-async-ingestion--back-pressure)
 
 ---
 
@@ -160,6 +161,100 @@ If ZCARD returns a count > limit, the request is denied.
 A simple `INCR key` + `EXPIRE 60` creates a fixed window. The problem: Acme could send 200 requests at second 59 of window 1, then 200 more at second 1 of window 2 — that's 400 requests in 2 seconds, all passing two separate windows. The sorted set gives a true sliding window where the count is always calculated over the last 60 seconds from right now.
 
 **Key files:** `src/utils/ratelimit.ts`, `src/api/hooks/ratelimit.ts`, `src/config/auth.ts`
+
+### Deep Dive: Pipeline vs Lua Atomicity
+
+The demo implementation uses a Redis pipeline — 4 commands sent in one network round trip. This is fast and works fine at low concurrency. But there's a subtle race condition at scale.
+
+**The problem: add-then-check**
+
+Our pipeline does this:
+
+```
+Step 1: ZREMRANGEBYSCORE  → remove old entries
+Step 2: ZADD              → add THIS request to the set
+Step 3: ZCARD             → count entries in the set
+Step 4: EXPIRE            → safety TTL
+```
+
+Notice the order: we **add first** (ZADD), then **count** (ZCARD). If the count exceeds the limit, we deny the request — but the entry is already in the set.
+
+A pipeline sends all 4 commands in one network round trip, but Redis still executes them as 4 separate commands. Between our commands, another client's commands can interleave.
+
+**Scenario: the race condition**
+
+```
+Rate limit: 100/min. Currently 99 requests in the window.
+Client A and Client B arrive at the same moment.
+
+Client A's pipeline: ZREM, ZADD(A), ZCARD, EXPIRE
+Client B's pipeline: ZREM, ZADD(B), ZCARD, EXPIRE
+
+Redis executes them interleaved:
+  1. A.ZREMRANGEBYSCORE  → removes old entries (still 99)
+  2. A.ZADD              → adds A (now 100 in set)
+  3. B.ZREMRANGEBYSCORE  → nothing to remove (still 100)
+  4. B.ZADD              → adds B (now 101 in set)
+  5. A.ZCARD             → returns 101 → A is DENIED
+  6. B.ZCARD             → returns 101 → B is DENIED
+
+Result: Both denied. But one should have been allowed (99 → 100 is fine).
+```
+
+The problem is that both clients added their entry before either checked the count. By the time ZCARD runs, it sees both entries.
+
+**The fix: Lua script (check-then-add, atomic)**
+
+A Lua script executes as a single atomic unit in Redis. No other client's commands can run between any of the lines. This lets us flip the order: **count first, add only if under limit**.
+
+```lua
+-- rate_limit.lua
+-- Runs atomically on the Redis server — no interleaving possible
+
+local key = KEYS[1]
+local window = tonumber(ARGV[1])    -- 60 seconds
+local limit = tonumber(ARGV[2])     -- e.g. 100
+local now = tonumber(ARGV[3])       -- current timestamp
+
+-- Step 1: Remove entries older than the window
+redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
+
+-- Step 2: Count FIRST (before adding)
+local count = redis.call('ZCARD', key)
+
+-- Step 3: Only add if under limit
+if count < limit then
+  redis.call('ZADD', key, now, now .. ':' .. math.random())
+  redis.call('EXPIRE', key, window + 1)
+  return {1, limit - count - 1}   -- {allowed=1, remaining}
+else
+  return {0, 0}                    -- {denied=0, remaining=0}
+end
+```
+
+**Same scenario with Lua script:**
+
+```
+Rate limit: 100/min. Currently 99 requests in the window.
+Client A and Client B arrive at the same moment.
+
+Redis executes A's Lua script atomically (B waits):
+  1. ZREMRANGEBYSCORE  → removes old entries (99 in set)
+  2. ZCARD             → returns 99
+  3. 99 < 100          → allowed!
+  4. ZADD(A)           → adds A (100 in set)
+  5. Return {1, 0}     → A is ALLOWED, 0 remaining
+
+Then Redis executes B's Lua script atomically:
+  1. ZREMRANGEBYSCORE  → nothing to remove (100 in set)
+  2. ZCARD             → returns 100
+  3. 100 < 100         → false!
+  4. Return {0, 0}     → B is DENIED, entry never added
+
+Result: A is allowed (99 → 100), B is denied (at limit). Exactly correct.
+```
+
+**Why the demo uses pipeline anyway:** At demo throughput (one user, a few requests/second), the race condition is nearly impossible. The pipeline is simpler code and easier to read. For production with thousands of concurrent requests per second, the Lua script is the right choice.
 
 ---
 
@@ -541,6 +636,171 @@ The current endpoint is a **dry-run** — it builds all the Stripe payloads but 
 
 ---
 
+## 12. Deep Dive: Async Ingestion & Back-Pressure
+
+The demo pipeline is synchronous — validate, dedup, store, backup all happen in one request. This is simple and works for demo throughput, but in production, you'd decouple ingestion from processing using a stream buffer.
+
+### The async pipeline
+
+```
+Client sends POST /v1/events
+         │
+         ▼
+┌─────────────────┐
+│  API Gateway    │  Receives the HTTP request
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Ingestion      │  1. Validates schema + business rules
+│  Lambda         │  2. Checks Redis for duplicates (SET NX)
+│                 │  3. Writes accepted events to Kinesis
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Client gets    │  202 Accepted (not 200 OK)
+│  response back  │  "Your events are received, processing happens later"
+└─────────────────┘
+```
+
+The client is done. They don't wait for ClickHouse or S3. The response is fast because validation + dedup are Redis operations (sub-millisecond).
+
+**In the background:**
+
+```
+┌─────────────────┐
+│  Kinesis Stream │  Events sit here, ordered by customer_id (partition key)
+│  (the buffer)   │  Retained for 7 days even if nothing reads them
+└────────┬────────┘
+         │  Kinesis triggers processor Lambda with a batch of records
+         ▼
+┌─────────────────┐
+│  Processor      │  1. Batch insert into ClickHouse
+│  Lambda         │  2. Write raw JSON to S3
+└─────────────────┘
+```
+
+### How back-pressure works
+
+Each Kinesis shard has a **hard write capacity**: 1 MB/sec and 1,000 records/sec. These are fixed limits per shard — not configurable.
+
+Back-pressure means: **when one part of the system is overwhelmed, it pushes resistance back to the caller so the caller slows down.** In this pipeline, Kinesis shard limits are the natural throttle point.
+
+### Scenario 1: Traffic spike (ingestion side)
+
+Normal traffic is 500 events/sec. You have 1 Kinesis shard (capacity: 1,000 records/sec). Suddenly a customer's integration goes haywire and sends 2,000 events/sec.
+
+```
+Normal:    500 events/sec  →  Kinesis shard (1,000/sec capacity)  →  accepted
+Spike:   2,000 events/sec  →  Kinesis shard (1,000/sec capacity)  →  FULL
+```
+
+When the ingestion Lambda calls `kinesis.putRecords()` and the shard is full, Kinesis throws `ProvisionedThroughputExceededException`. The Lambda catches this and returns **429 Too Many Requests** back through API Gateway to the client.
+
+```
+Client  ←── 429 Too Many Requests ←── Lambda ←── Kinesis shard full
+
+The pressure chain:
+  Client sees 429 → backs off (exponential retry)
+  → traffic drops → shard has capacity again → requests start succeeding
+```
+
+The client sees 429 with a `retry_after_seconds` header and knows to slow down. This is back-pressure: the system's capacity limit propagates all the way back to the caller.
+
+### Scenario 2: ClickHouse is slow (processing side)
+
+Traffic is normal, but ClickHouse is having a bad day — slow inserts, maintenance, whatever.
+
+**Without Kinesis (our current sync pipeline):**
+
+```
+Client sends event
+  → Lambda tries ClickHouse insert
+  → ClickHouse takes 10 seconds to respond
+  → Client's request hangs for 10 seconds
+  → If many concurrent requests: all blocked, all timing out
+```
+
+Every client is directly coupled to ClickHouse's performance.
+
+**With Kinesis:**
+
+```
+Client sends event
+  → Lambda validates, dedupes, writes to Kinesis
+  → Client gets 202 Accepted in ~50ms (ClickHouse not involved)
+
+Meanwhile in the background:
+  Kinesis: [event1, event2, event3, event4, ...]  ← records accumulating
+                                        │
+                                        ▼
+  Processor Lambda: ClickHouse insert is slow...
+    → Lambda execution takes 30s instead of 2s
+    → Fewer batches processed per minute
+    → Records pile up in Kinesis (buffer absorbs the backlog)
+
+  ClickHouse recovers:
+    → Processor Lambda speeds up
+    → Works through the backlog
+    → Stream drains back to normal
+```
+
+The client never knew anything was wrong — they got their 202 immediately. Kinesis absorbed the impact. The 7-day retention means even if ClickHouse is down for hours, no data is lost.
+
+### Scenario 3: Processor Lambda crashes
+
+The processor Lambda hits an uncaught exception and crashes.
+
+```
+Kinesis: [event1, event2, event3, ...]
+                    │
+                    ▼
+  Processor Lambda: CRASH
+
+  Kinesis retries:
+    → Sends the same batch to a new Lambda invocation
+    → Lambda crashes again
+
+  After N retries (configurable):
+    → Failed records route to SQS Dead Letter Queue (DLQ)
+    → DLQ retains records for 14 days
+    → Engineer investigates, fixes the bug, replays from DLQ
+
+  Meanwhile:
+    → New events keep flowing into Kinesis (clients still get 202)
+    → Only the failing batch is stuck, not the whole stream
+```
+
+The DLQ is the safety net. Events are never lost — they either make it to ClickHouse or they land in the DLQ for manual replay.
+
+### Why Kinesis over SQS
+
+Both are AWS message services, but they serve different purposes:
+
+| Concern | Kinesis | SQS |
+|---------|---------|-----|
+| Ordering | Ordered within shard (partition by customer_id) | No ordering guarantee |
+| Replay | Can re-read data within retention window | Once consumed, gone |
+| Retention | Configurable (1-365 days) | 14 days max |
+| Consumer model | Multiple consumers read same data | Single consumer per message |
+| Back-pressure | Shard limits provide natural throttle | No built-in throttle |
+
+For a billing system, ordering matters — if Acme sends events A, B, C, they should be processed in that order. Kinesis guarantees this within a shard when you partition by customer_id. SQS doesn't guarantee ordering (unless you use FIFO queues, which have lower throughput).
+
+Replay is also critical — if you find a bug in the processor, you can rewind the stream and reprocess. With SQS, consumed messages are gone.
+
+### The key insight
+
+Kinesis decouples "receiving events" from "processing events":
+
+- **Fast path** (client-facing): validate → dedup → write to Kinesis → 202 Accepted
+- **Slow path** (background): read from Kinesis → ClickHouse insert → S3 backup
+
+The client only touches the fast path. The slow path happens asynchronously. And the shard capacity limits are what prevent the system from being overwhelmed — that's the back-pressure mechanism.
+
+---
+
 ## Full Pipeline Summary
 
 Here's the complete lifecycle of a usage event, from ingestion to billing:
@@ -576,4 +836,4 @@ POST /v1/events (with X-API-Key)
 Acme receives invoice, pays via Stripe
 ```
 
-Each step is a separate, testable module. The pipeline is synchronous in demo mode (single request processes everything) but designed to be split into async stages for production (Kinesis buffering, Lambda processors, scheduled billing jobs). The production architecture for each component is documented in `docs/PRODUCTION_ANOMALY_DETECTION.md`.
+Each step is a separate, testable module. The pipeline is synchronous in demo mode (single request processes everything) but designed to be split into async stages for production (Kinesis buffering, Lambda processors, scheduled billing jobs). See [Production Considerations](PRODUCTION_CONSIDERATIONS.md) for how each component would change for AWS deployment.
